@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pandas as pd
 import re
@@ -20,7 +22,7 @@ class DataProcessor:
 
     @staticmethod
     def df_name(variables):
-        return ["f{}".format(x) for x in variables]
+        return ["f{}".format(x) if isinstance(x, int) else x for x in variables ]
 
     @staticmethod
     def intersection(l1, l2):
@@ -46,14 +48,14 @@ class DataProcessor:
 
     def impute(self, df, columns, strategy="mean"):
         data = df[columns]
-        print(data.head())
+        vars = data.columns
         if strategy == "mean":
             imp = SimpleImputer(strategy=strategy, missing_values=np.nan)
             data = imp.fit_transform(data)
         else:
-            imp = IterativeImputer(estimator=ExtraTreesRegressor())
+            imp = IterativeImputer(random_state=1, verbose=2)
             data = imp.fit_transform(data)
-        df[columns] = pd.DataFrame(data, columns)
+        df[columns] = pd.DataFrame(data, columns=vars)
         return df
 
     @staticmethod
@@ -105,7 +107,7 @@ class DataProcessor:
             print(data.head())
         if impute:
             data = self.impute(
-                data, columns=self.get_correct_columns(columns, cont=True), strategy="iterative"
+                data, columns=self.df_name(config.cat_encoded_as_int + config.numerical), strategy="iterative"
             )
 
 
@@ -123,10 +125,21 @@ class DataProcessor:
         else:
             data.to_csv(save_path)
 
+def transform(x):
+    if x < 1:
+        return np.int64(x*10)
+    elif math.isnan(x):
+        return x
+    else:
+        return np.int64(x)
 
 if __name__ == "__main__":
     data = pd.read_csv("../data/challenge2_train.csv")
-    data = data.drop("id", axis=1)
+    print(data.head())
     pr = DataProcessor()
-    pr.process(data, columns=config.attributes, str_columns=[], normalize=True, convert_hex=True, impute=True,
+    int_encoded = pr.df_name(config.cat_encoded_as_int)
+    data[int_encoded] = data[int_encoded].applymap(lambda x: transform(x))
+    features = ["id", "target"] + config.attributes
+    pr.process(data, columns=features, str_columns=[], normalize=True, convert_hex=True, impute=True,
                save_path="../data/dataframe_train.csv")
+    print("Okay")

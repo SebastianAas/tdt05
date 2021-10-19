@@ -9,6 +9,7 @@ import pandas as pd
 
 from catboost import CatBoostClassifier, Pool
 from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GridSearchCV
 
 # initialize data
 import config as cf
@@ -38,11 +39,13 @@ class ExperimentConfig:
 class GridConfig:
     def __init__(
             self, depth: list[int], learning_rate: list[float],
-            l2_leaf_reg: list[int]
+            l2_leaf_reg: list[int], grow_policy: list[str], border_count: list[int]
     ):
         self.learning_rate = learning_rate
         self.depth = depth
         self.l2_leaf_reg = l2_leaf_reg
+        self.grow_policy = grow_policy
+        self.border_count = border_count
 
 
 class CatConfig:
@@ -52,9 +55,6 @@ class CatConfig:
         self.learning_rate = learning_rate
         self.depth = depth
         self.l2_leaf_reg = l2_leaf_reg
-
-
-
 
 
 class NNConfig:
@@ -107,27 +107,44 @@ class Experiment:
             )
             """
             x_train, x_val, y_train, y_val = train_test_split(
-                train, labels, test_size=0.25
+                train, labels, test_size=0.02
             )
-            print(type(self.model_config))
             if type(self.model_config) == GridConfig:
-                model = self.run_grid_search(x_train, y_train)
+                self.run_grid_search(train, labels, test_data, self.dp.df_name(self.dp.intersection(self.experiment_config.cat_features, columns)))
             elif type(self.model_config) == NNConfig:
                 model = self.train_nn_model(train, labels, test_data)
             else:
                 self.run_single_experiment(train, labels, test_data)
 
-    def run_grid_search(self, train, test):
+    def run_grid_search(self, train, labels, test_data, cat_features):
         model = CatBoostClassifier(
             early_stopping_rounds=100,
             eval_metric="AUC",
             loss_function="Logloss",
+            cat_features=cat_features,
+            verbose=100,
+        )
+        model.grid_search(vars(self.model_config), train, y=labels)
+        predictions = model.predict_proba(test_data)
+        accuracy = (model.get_best_iteration(), model.get_best_score())
+        self.write_results(predictions, accuracy, len(train.columns))
+
+    def run_grid_search_cv(self, train, labels, test_data):
+        model = CatBoostClassifier(
+            early_stopping_rounds=100,
+            eval_metric="AUC",
             cat_features=self.experiment_config.cat_features,
         )
-        model.grid_search(vars(self.model_config), train, y=test)
-        return model
 
-    def train_nn_model(self,train, labels, test_data):
+        gscv = GridSearchCV(estimator=model, param_grid=vars(self.model_config), scoring="AUC", cv=10)
+        gscv.fit(train, y=labels)
+        predictions = gscv.predict_proba(test_data)
+        print(gscv.best_params_)
+        print(gscv.best_estimator_)
+        accuracy = (model.get_best_iteration(), model.get_best_score())
+        self.write_results(predictions, accuracy, len(train.columns))
+
+    def train_nn_model(self, train, labels, test_data):
         x_train, x_val, y_train, y_val = train_test_split(
             train, labels, test_size=0.2
         )
@@ -149,7 +166,7 @@ class Experiment:
         model.fit(x_train, y_train, epochs=20, validation_data=(x_val, y_val))
 
         predictions = model.predict(test_data)
-        predictions = [(1-x, x) for x in predictions]
+        predictions = [(1 - x, x) for x in predictions]
         accuracy = model.evaluate(test_data)
         print(accuracy)
         print(predictions)
@@ -165,13 +182,15 @@ class Experiment:
             learning_rate=model_config.learning_rate,
             depth=model_config.depth,
             l2_leaf_reg=model_config.l2_leaf_reg,
+            grow_policy="Lossguide",
             eval_metric="AUC",
             loss_function="Logloss",
+            border_count=254,
             verbose=100,
             early_stopping_rounds=100,
         )
         x_train, x_val, y_train, y_val = train_test_split(
-            train, labels, test_size=0.2
+            train, labels, test_size=0.01
         )
 
         if self.experiment_config.one_hot_encoded:
@@ -211,9 +230,12 @@ class Experiment:
     def write_results(
             self, predictions, accuracy, number_of_variables
     ):
-
         AUC = accuracy[1]["validation"]["AUC"]
         logloss = accuracy[1]["validation"]["Logloss"]
+        score_file = Path("../experiments/score_board.csv")
+        if not score_file.is_file():
+            with ("../experiments/score_board.csv", "w+") as f:
+                f.write(",AUC,Logloss,file_path")
         score_board = pd.read_csv("../experiments/score_board.csv")
         dir_path = f"../experiments/{number_of_variables}"
         Path(dir_path).mkdir(parents=True, exist_ok=True)
@@ -250,10 +272,11 @@ if __name__ == "__main__":
     dataset_path = "../data/challenge2_train.csv"
     testset_path = "../data/challenge2_test.csv"
     cat_config = GridConfig(
-        learning_rate=cf.learning_rate, depth=cf.depths, l2_leaf_reg=cf.l2_leaf_reg
+        learning_rate=cf.learning_rate, depth=cf.depths, l2_leaf_reg=cf.l2_leaf_reg, grow_policy=cf.growth_strategy,
+        border_count=cf.border_count
     )
     model_config = CatConfig(
-        learning_rate=0.0811, depth=2, l2_leaf_reg=7
+        learning_rate=0.0811, depth=3, l2_leaf_reg=2
     )
     nn_config = NNConfig(learning_rate=0.1, layers=[512, 256, 128])
     cat_features = cf.attributes
@@ -262,7 +285,8 @@ if __name__ == "__main__":
         cat_features=cat_features,
         convert_hex=False,
         normalize=False,
-        one_hot_encoded=True,
+        one_hot_encoded=False,
+        impute=False
     )
-    ex = Experiment(dataset_path, testset_path, ex_config, nn_config)
+    ex = Experiment(dataset_path, testset_path, ex_config, model_config)
     ex.run_experiments()

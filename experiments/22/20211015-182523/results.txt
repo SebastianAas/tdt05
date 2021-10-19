@@ -1,5 +1,0 @@
-## Config
-{'number_of_variables': [20, 21, 22, 23, 24, 25, 26, 27, 28, 29], 'cat_features': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28], 'cv': 10, 'normalize': False, 'convert_hex': False, 'one_hot_encoded': False, 'impute': False}
-## Results
-Best iteration: 962
-Best accuracy: {'learn': {'Logloss': 0.40828765870330225}, 'validation': {'Logloss': 0.4160250707614467, 'AUC': 0.7593082377812879}}
